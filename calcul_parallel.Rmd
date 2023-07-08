@@ -1,0 +1,245 @@
+---
+title: "TP Calcul Parallèle"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+hearder-includes: \usepackage{setspaces}\doublespacing
+toc: yes
+---
+# Préliminaire
+
+```{r}
+#vider la mémoire
+rm(list=ls())
+
+```
+
+```{r}
+#lancer le garbage collector
+gc()
+
+```
+Le garbage collector permet de gérer automatiquement la mémoire allouée aux objets.
+
+Lorsqu'un programme s'exécute, il alloue de la mémoire pour créer des objets et stocker des données. Cependant, il arrive souvent que certains objets ne soient plus utilisés par le programme, ce qui crée des "déchets" ou des "objets morts" en mémoire. Si ces objets morts ne sont pas libérés, ils peuvent occuper de l'espace précieux en mémoire et entraîner des problèmes tels que des fuites de mémoire.
+
+## Packages
+
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+#pour mesurer le temps de calcul
+#install.packages("tictoc")
+library(tictoc)
+
+#library parallel
+library(parallel)
+
+#packages combinaison de foreach et doParallel
+library(foreach)
+library(doParallel)
+
+# 
+#install.packages("snow")
+library(snow)
+```
+
+
+```{r}
+#information sur les versions
+sessionInfo()
+#help(package='parallel')
+```
+
+# Définition de la fonction pour calculer le Min
+
+
+```{r}
+mon_min <- function(v) {
+  #copie locale
+  temp <- v
+  #longueur du vecteur
+  n <- length(temp)
+  #tri par selection si (n > 1)
+  if (n > 1) {
+    #recherche des minimums successifs
+    for (i in 1:(n - 1)) {
+      i_mini <- i
+      for (j in (i + 1):n) {
+        if (temp[j] < temp[i_mini]) {
+          i_mini <- j
+        }
+      }
+      #Echanger
+      if (i_mini != i) {
+        tempo <- temp[i]
+        temp[i] <- temp[i_mini]
+        temp[i_mini] <- tempo
+      }
+    }
+  }
+  #la plus petite valeur est le min.
+  return(temp[1])
+}
+
+```
+
+# Application de la programmation parallèle pour déterminer le Min
+
+```{r}
+# Génération d'un vecteur de données
+n <- 10
+a <- runif(n)
+a
+```
+
+## Calcul direct (sans paralleliser)
+
+```{r}
+#appel de la fonction sur la totalité du vecteur
+tic()
+print(paste('Min direct =',mon_min(a)))
+print('>> Temps de calcul - fonction mon_min direct')
+toc()
+```
+
+## Calcul en utilisant la programmation parallèle
+
+```{r}
+
+#affichage nombre de coeurs dispo
+print(parallel::detectCores())
+#nombre de blocs des donnees = nombre de cores
+k <- 4
+#partition en blocs des donn?es
+blocs <- split(a,1+(1:n)%%k)
+print(blocs)
+```
+```{r message=FALSE, warning=FALSE}
+#appel de la fonction sur la totalité du vecteur
+tic()
+print(paste('Min direct =',mon_min(a)))
+print('>> Temps de calcul - fonction mon_min direct')
+toc()
+#pour mesurer le processus global de **parallel**
+tic()
+#Demarrage des moteurs (workers)
+clust <- parallel::makeCluster(4)
+#lancement des min en parallele
+res <- parallel::parSapply(clust,blocs,FUN = mon_min)
+#résultats intermédiaires
+print(res)
+#fonction de consolidation
+print(paste('Min parallel =',mon_min(res)))
+#Eteindre les moteurs
+parallel::stopCluster(clust)
+#affichage temps de calcul
+print('>> Temps de calcul total avec parSapply min par bloc')
+#temps de calcul
+toc()
+```
+
+
+### Calcul de la moyenne
+
+
+```{r}
+#appel de la fonction sur la totalité du vecteur
+tic()
+print(paste('Moyenne direct =',mean(a)))
+print('>> Temps de calcul - fonction moyenne direct')
+toc()
+#pour mesurer le processus global de **parallel**
+tic()
+#Demarrage des moteurs (workers)
+clust <- parallel::makeCluster(4)
+#lancement des min en parallele
+res <- parallel::parSapply(clust,blocs,FUN = mean)
+poids<-parallel::parSapply(clust,blocs,FUN = length)
+#résultats intermédiaires
+print(res)
+#fonction de consolidation
+moy<-weighted.mean(res,poids)
+print(paste('Moyenne parallel =',moy))
+
+#Eteindre les moteurs
+parallel::stopCluster(clust)
+#affichage temps de calcul
+print('>> Temps de calcul total avec parSapply moy par bloc)')
+#temps de calcul
+toc()
+
+```
+*Rapport sur l'usage des coeurs*
+```{r}
+# Rapport sur l'usage des coeurs
+cl <- snow::makeCluster(k) 
+ctime1 <- snow.time(clusterApply(cl,blocs,fun=mean))
+
+plot(ctime1)
+```
+
+# Avec les packages Doparallel et Foreach
+
+```{r}
+#nombre de cores à exploiter
+#k <- 4
+tic()
+#partition en blocs des donnees
+blocs <- split(a,1+(1:n)%%k)
+#print(blocs)
+
+#configurer les cores
+doParallel::registerDoParallel(k)
+
+#itérer sur les blocs
+res <- foreach::foreach(b = blocs, .combine = c) %dopar% {
+  return(mon_min(b))
+}
+
+#résultats intermédiaires
+#print(res)
+
+#minimum global
+print(paste('Min foreach/dopar =',mon_min(res)))
+
+#stopper les cores
+doParallel::stopImplicitCluster()
+
+#affichage temps de calcul
+print('>> Temps de calcul total avec foreach/dopar (split + min par bloc)')
+
+#temps de calcul
+toc()
+
+```
+
+# MAP REDUCE
+
+```{r eval=FALSE, include=FALSE}
+# Installation des packages necessaires
+install.packages(c("Rcpp","RJSONIO","bitops","digest",
+                "functional","reshape2","stringr","plyr"))
+install.packages(c("rjson","caTools","R.methodsS3",
+                   "Hmisc","bit64","rJava"))
+install.packages("ggplot2")
+```
+
+```{r eval=FALSE, include=FALSE}
+# Mise des packages
+update.packages(checkBuilt = TRUE, ask = FALSE)
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
